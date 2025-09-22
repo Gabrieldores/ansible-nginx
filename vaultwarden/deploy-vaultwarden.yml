@@ -1,0 +1,85 @@
+---
+- name: Deploy Vaultwarden with PostgreSQL Backend
+  hosts: docker_servers
+  become: yes
+
+  # Ansible irá carregar as variáveis de 'group_vars/all/secrets.yml' automaticamente.
+
+  tasks:
+    # --- Bloco 1: Pré-requisitos no Servidor Host ---
+    - name: 1. Ensure python postgresql library is installed
+      ansible.builtin.package:
+        name: python3-psycopg2
+        state: present
+      tags:
+        - prerequisites
+
+    - name: 2. Create a persistent data directory for Vaultwarden
+      ansible.builtin.file:
+        path: /opt/vaultwarden
+        state: directory
+        mode: '0755'
+      tags:
+        - prerequisites
+
+    # --- Bloco 2: Configuração do Banco de Dados ---
+    # Estas tarefas se conectam ao PostgreSQL (dentro do container)
+    # a partir do host para criar o usuário e o banco de dados do Vaultwarden.
+    - name: 3. Ensure the Vaultwarden database user exists
+      community.postgresql.postgresql_user:
+        # Parâmetros de conexão com o superusuário do Postgres
+        login_host: '127.0.0.1'
+        login_user: postgres
+        login_password: "{{ postgres_root_password }}"
+        port: 5432
+        # Dados do usuário a ser criado
+        name: "{{ postgres_databases[1].user }}"
+        password: "{{ postgres_databases[1].pass }}"
+        state: present
+      # no_log: true # Esconde as senhas no log
+      tags:
+        - database
+
+    - name: 4. Ensure the Vaultwarden database exists
+      community.postgresql.postgresql_db:
+        # Parâmetros de conexão com o superusuário do Postgres
+        login_host: '127.0.0.1'
+        login_user: postgres
+        login_password: "{{ postgres_root_password }}"
+        port: 5432
+        # Dados do banco de dados a ser criado
+        name: "{{ postgres_databases[1].name }}"
+        owner: "{{ postgres_databases[1].user }}"
+        state: present
+      no_log: true
+      tags:
+        - database
+
+    # --- Bloco 3: Implantação do Container do Vaultwarden ---
+    - name: 5. Pull the latest Vaultwarden image
+      community.docker.docker_image:
+        name: vaultwarden/server:latest
+        source: pull
+      tags:
+        - application
+
+    - name: 6. Deploy the Vaultwarden container
+      community.docker.docker_container:
+        name: vaultwarden
+        image: vaultwarden/server:latest
+        state: started
+        restart_policy: always
+        ports:
+          - "8080:80"
+        volumes:
+          - /opt/vaultwarden:/data
+        env:
+
+          DATABASE_URL: "postgresql://{{ postgres_databases[1].user }}:{{ postgres_databases[1].pass }}@172.17.0.1/{{ postgres_databases[1].name }}"
+          
+          # Configurações importantes do Vaultwarden
+          SIGNUPS_ALLOWED: "true"       # Mude para 'false' após criar o primeiro usuário
+          WEBSOCKET_ENABLED: "true"     # Habilita notificações em tempo real
+          ADMIN_TOKEN: "{{ postgres_root_password | password_hash('bcrypt') }}" # Token para a página de admin
+      tags:
+        - application

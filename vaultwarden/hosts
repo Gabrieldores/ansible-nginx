@@ -1,0 +1,4 @@
+# vaultwarden/hosts
+
+[docker_servers]
+meu_servidor ansible_host=89.116.30.191 ansible_user=root
